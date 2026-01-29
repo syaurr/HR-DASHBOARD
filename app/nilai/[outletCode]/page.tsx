@@ -1,7 +1,7 @@
 'use client';
 
 // Import hooks dan komponen yang kita butuhkan
-import { useEffect, useState } from 'react';
+import { useEffect, useState, use } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -33,7 +33,7 @@ type Aspect = {
 type Step = 'welcome' | 'description' | 'selectAssessor' | 'selectAssessed' | 'rating' | 'success';
 
 // Komponen utama halaman kita
-export default function AssessmentPage({ params }: { params: { outletCode: string } }) {
+export default function AssessmentPage({ params }: { params: Promise<{ outletCode: string }> }) {
     // === STATE MANAGEMENT (VERSI DIPERBAIKI) ===
     const [step, setStep] = useState<Step>('welcome');
     const [allCrew, setAllCrew] = useState<CrewMember[]>([]);
@@ -46,7 +46,7 @@ export default function AssessmentPage({ params }: { params: { outletCode: strin
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
-    const { outletCode } = params;
+    const { outletCode } = use(params);
 
     const [systemRating, setSystemRating] = useState<string | null>(null);
     const [hrRating, setHrRating] = useState<string | null>(null);
@@ -67,7 +67,7 @@ export default function AssessmentPage({ params }: { params: { outletCode: strin
             try {
                 // Ambil semua data secara bersamaan
                 const [crewRes, periodRes, tiktokRes] = await Promise.all([
-                    fetch(`/api/crew/${params.outletCode}`),
+                    fetch(`/api/crew/${outletCode}`),
                     fetch('/api/active-period'),
                     fetch('/api/setting?key=tiktok_success_url')
                 ]);
@@ -100,7 +100,7 @@ export default function AssessmentPage({ params }: { params: { outletCode: strin
             }
         };
         fetchData();
-    }, [params.outletCode]);
+    }, [outletCode]);
 
 
     useEffect(() => {
@@ -579,7 +579,7 @@ export default function AssessmentPage({ params }: { params: { outletCode: strin
                     </h2>
                     <p className="text-gray-600">
                         {/* Baca nama periode langsung dari objek 'activePeriod' */}
-                        Kamu sudah menilai semua rekan kerjamu di outlet {outletCode.toUpperCase()} untuk {activePeriod?.name || 'periode ini'}.
+                        Kamu sudah menilai semua rekan kerjamu di outlet {outletCode?.toUpperCase()} untuk {activePeriod?.name || 'periode ini'}.
                     </p>
 
                     {videoId && (
@@ -672,7 +672,7 @@ export default function AssessmentPage({ params }: { params: { outletCode: strin
                         <Image src="/logo.png" alt="Balista Logo" width={100} height={40} priority />
                     </div>
                     <CardTitle className="text-2xl font-bold text-[#022020]">
-                       Penilaian Individu - {outletCode.toUpperCase()}<br />
+                       Penilaian Individu - {outletCode?.toUpperCase()}<br />
                        {activePeriod?.name || 'Periode Aktif'}
                     </CardTitle>
                 </CardHeader>

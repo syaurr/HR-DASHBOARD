@@ -11,8 +11,14 @@ import {
     LayoutDashboard,
     Users,
     Building,
+    FileSignature,
     CalendarClock,
     Calculator,
+    ClipboardList,
+    UserCog,
+    Wallet,
+    Banknote,
+    Trophy,
     PanelLeftClose,
     PanelLeftOpen,
     MessageSquareQuote,
@@ -30,8 +36,14 @@ const navLinks: NavLink[] = [
     { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
     { href: "/admin/crew", label: "Kru", icon: Users },
     { href: "/admin/outlets", label: "Outlet", icon: Building },
+    { href: "/admin/contracts", label: "Kontrak Kerja", icon: FileSignature }, // NEW
     { href: "/admin/periods", label: "Periode", icon: CalendarClock },
     { href: "/admin/weights", label: "Bobot", icon: Calculator },
+        { href: "/admin/cash-advances", label: "Kasbon", icon: Wallet }, // NEW: Menu Approval Kasbon
+    { href: "/admin/crew/accounts", label: "Akun Login", icon: UserCog }, // NEW: Menu Generate Akun
+    { href: "/admin/attendance", label: "Data Absensi", icon: ClipboardList },
+    { href: "/admin/payroll", label: "Penggajian", icon: Banknote }, 
+    { href: "/admin/incentives", label: "Aturan Insentif", icon: Trophy },
     { href: "/admin/feedback", label: "Rekap Feedback", icon: MessageSquareQuote },
     { href: "/admin/settings", label: "Pengaturan", icon: Settings },
 ];
