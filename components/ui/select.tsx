@@ -18,11 +18,24 @@ function SelectGroup({
   return <SelectPrimitive.Group data-slot="select-group" {...props} />
 }
 
-function SelectValue({
-  ...props
-}: React.ComponentProps<typeof SelectPrimitive.Value>) {
-  return <SelectPrimitive.Value data-slot="select-value" {...props} />
-}
+const SelectValue = React.forwardRef<
+  React.ElementRef<typeof SelectPrimitive.Value>,
+  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Value>
+>(({ className, placeholder, children, ...props }, ref) => {
+  // KITA BUANG TOTAL PROPS BAWAAN YANG BERPOTENSI ERROR
+  // Kita hanya ambil 'placeholder' dan 'children' (jika ada)
+  return (
+    <span className={cn("pointer-events-none block truncate", className)}>
+      <SelectPrimitive.Value 
+        ref={ref} 
+        placeholder={placeholder} 
+      >
+        {children}
+      </SelectPrimitive.Value>
+    </span>
+  )
+})
+SelectValue.displayName = SelectPrimitive.Value.displayName
 
 function SelectTrigger({
   className,

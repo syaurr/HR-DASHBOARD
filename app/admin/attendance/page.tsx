@@ -75,7 +75,7 @@ export default function AttendancePage() {
         return {
           crew_id: c.id,
           crew_name: c.full_name,
-          outlet_name: c.outlets?.name || "-",
+          outlet_name: Array.isArray(c.outlets) ? (c.outlets[0] as any)?.name ?? "-" : (c.outlets as any)?.name ?? "-",
           h: saved?.count_h || 0,
           ht: saved?.count_ht || 0,
           s: saved?.count_s || 0,

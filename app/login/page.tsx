@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Image from 'next/image';
 import { supabase } from '@/lib/supabaseClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,56 +19,73 @@ export default function LoginPage() {
         e.preventDefault();
         setIsLoading(true);
 
-        const { error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-        });
-
-        setIsLoading(false);
-
-        if (error) {
-            toast.error('Login Gagal', {
-                description: 'Email atau password salah. Silakan coba lagi.',
+        try {
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email,
+                password,
             });
-        } else {
-            toast.success('Login Berhasil!');
-            window.location.assign('/admin');
+
+            if (error) throw error;
+
+            // Ambil nama user untuk sapaan
+            const name = data.user?.user_metadata?.full_name || 'Karyawan';
+            const role = data.user?.user_metadata?.role;
+
+            toast.success(`Selamat Datang, ${name}!`);
+
+            // Routing Logic
+            const employeeRoles = ['crew', 'leader', 'supervisor'];
+            
+            if (employeeRoles.includes(role)) {
+                router.push('/crew/dashboard');
+            } else if (role === 'admin') {
+                router.push('/admin');
+            } else {
+                // Fallback aman ke dashboard crew
+                router.push('/crew/dashboard');
+            }
+
+        } catch (error: any) {
+            toast.error('Gagal Masuk', { 
+                description: 'Email atau password salah.' 
+            });
+        } finally {
+            setIsLoading(false);
         }
     };
 
     return (
-        <div className="flex min-h-screen items-center justify-center bg-muted/40">
-            <Card className="w-full max-w-sm">
+        <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+            <Card className="w-full max-w-sm shadow-lg border-t-4 border-t-blue-600">
                 <CardHeader className="text-center">
-                    <Image src="/logo.png" alt="Logo" width={120} height={48} className="mx-auto" />
-                    <CardTitle className="text-2xl font-bold">Admin Login</CardTitle>
-                    <CardDescription>Masukkan email dan password yang sudah terdaftar.</CardDescription>
+                    <h1 className="text-2xl font-bold text-gray-800">HRIS PORTAL</h1>
+                    <CardDescription>Silakan masuk untuk akses dashboard</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleLogin} className="space-y-4">
                         <div className="space-y-2">
-                            <Label htmlFor="email">Email</Label>
-                            <Input
-                                id="email"
-                                type="email"
-                                placeholder="admin@example.com"
-                                required
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
+                            <Label htmlFor="email">Email Perusahaan</Label>
+                            <Input 
+                                id="email" 
+                                type="email" 
+                                placeholder="nama@email.com" 
+                                value={email} 
+                                onChange={e => setEmail(e.target.value)} 
+                                required 
                             />
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="password">Password</Label>
-                            <Input
-                                id="password"
-                                type="password"
-                                required
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
+                            <Input 
+                                id="password" 
+                                type="password" 
+                                value={password} 
+                                onChange={e => setPassword(e.target.value)} 
+                                required 
                             />
                         </div>
-                        <Button type="submit" className="w-full" disabled={isLoading}>
-                            {isLoading ? 'Memproses...' : 'Login'}
+                        <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={isLoading}>
+                            {isLoading ? 'Memuat...' : 'Masuk Akun'}
                         </Button>
                     </form>
                 </CardContent>

@@ -269,7 +269,26 @@ export default function PayrollListPage() {
 
                     <div className="pt-2">
                         <PDFDownloadLink
-                            document={<PayslipDocument data={detailData} />}
+                            document={<PayslipDocument data={{
+                                full_name: detailData.crew_name,
+                                role: detailData.crew_role,
+                                outlet_name: detailData.outlet_name,
+                                period_name: detailData.period_name,
+                                bank_name: detailData.bank_name,
+                                account_number: detailData.account_number,
+                                base_salary: detailData.base_salary,
+                                total_percentage_income: detailData.total_percentage_income,
+                                meal_allowance: detailData.meal_allowance,
+                                ranking_incentive: detailData.ranking_incentive,
+                                other_bonus: detailData.other_bonus,
+                                allowance_other: detailData.allowance_other,
+                                deduction_sia: detailData.deduction_sia,
+                                deduction_kasbon: detailData.deduction_kasbon,
+                                remaining_loan: detailData.remaining_loan,
+                                total_income: detailData.total_income,
+                                net_salary: detailData.net_salary,
+                                notes: detailData.notes
+                            } as any} />}
                             fileName={`Slip_${detailData.crew_name.replace(/\s+/g, '_')}_${detailData.period_name}.pdf`}
                             className="w-full"
                         >

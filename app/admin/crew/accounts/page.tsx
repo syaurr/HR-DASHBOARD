@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, UserPlus, UserX, CheckCircle2, Pencil, Save, X } from "lucide-react"; // Icon UserX untuk Revoke
+import { Loader2, UserPlus, UserX, CheckCircle2, Pencil, Save, X } from "lucide-react"; 
 import { toast } from "sonner";
 
 export default function CrewAccountsPage() {
@@ -24,11 +24,17 @@ export default function CrewAccountsPage() {
 
   const fetchCrews = async () => {
     setLoading(true);
-    const { data } = await supabase
+    // Kita ambil data realtime agar status auth_user_id selalu update
+    const { data, error } = await supabase
       .from("crew")
       .select("id, full_name, email, role, auth_user_id, is_active")
       .order("full_name");
-    if (data) setCrews(data);
+      
+    if (error) {
+        toast.error("Gagal memuat data crew");
+    } else if (data) {
+        setCrews(data);
+    }
     setLoading(false);
   };
 
@@ -47,6 +53,7 @@ export default function CrewAccountsPage() {
     if (!tempEmail.includes("@")) return toast.error("Format email tidak valid");
     
     const oldCrews = [...crews];
+    // Optimistic Update (Update UI duluan biar cepet)
     setCrews(crews.map(c => c.id === id ? { ...c, email: tempEmail } : c));
     setEditingId(null);
 
@@ -54,7 +61,7 @@ export default function CrewAccountsPage() {
 
     if (error) {
         toast.error("Gagal simpan email: " + error.message);
-        setCrews(oldCrews);
+        setCrews(oldCrews); // Rollback jika gagal
     } else {
         toast.success("Email diperbarui");
     }
@@ -66,28 +73,30 @@ export default function CrewAccountsPage() {
     
     setProcessing(crew.id);
     try {
-      const defaultPassword = "balista123"; 
-
-      const response = await fetch("/api/auth/create-user", {
+      // MENGGUNAKAN API ROUTE YANG KITA SEPAKATI (/api/admin/account)
+      const response = await fetch("/api/admin/account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: crew.email,
-          password: defaultPassword,
           crew_id: crew.id,
-          role: 'crew'
+          full_name: crew.full_name // Kirim nama untuk metadata user
         }),
       });
 
       const result = await response.json();
 
-      if (!response.ok) throw new Error(result.error);
+      if (!response.ok) throw new Error(result.message);
 
-      toast.success(`Akun dibuat! Email: ${crew.email}, Pass: ${defaultPassword}`);
-      fetchCrews();
+      toast.success("Akun Berhasil Dibuat", { 
+        description: `Password Default: ${result.tempPassword}`,
+        duration: 5000, // Tampil agak lama biar admin sempat catat
+      });
+      
+      fetchCrews(); // Refresh data untuk update status badge
       
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error("Gagal Generate Akun", { description: e.message });
     } finally {
       setProcessing(null);
     }
@@ -99,8 +108,9 @@ export default function CrewAccountsPage() {
 
     setProcessing(crew.id);
     try {
-        const response = await fetch("/api/auth/revoke-user", {
-            method: "POST",
+        // MENGGUNAKAN API ROUTE YANG KITA SEPAKATI (Method DELETE)
+        const response = await fetch("/api/admin/account", {
+            method: "DELETE",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 crew_id: crew.id,
@@ -109,13 +119,13 @@ export default function CrewAccountsPage() {
         });
 
         const result = await response.json();
-        if (!response.ok) throw new Error(result.error);
+        if (!response.ok) throw new Error(result.message);
 
         toast.success("Akses berhasil dicabut!");
-        fetchCrews(); // Refresh list agar status kembali ke "Belum Terdaftar"
+        fetchCrews(); 
 
     } catch (e: any) {
-        toast.error(e.message);
+        toast.error("Gagal Revoke", { description: e.message });
     } finally {
         setProcessing(null);
     }
@@ -123,24 +133,30 @@ export default function CrewAccountsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Manajemen Akun Karyawan</h1>
-      <p className="text-muted-foreground">Generate atau cabut akses login dashboard karyawan.</p>
+      <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-bold">Manajemen Akun Karyawan</h1>
+          <p className="text-muted-foreground text-sm">Generate password default atau cabut akses login dashboard karyawan.</p>
+      </div>
 
       <div className="rounded border bg-white shadow overflow-hidden">
         <Table>
           <TableHeader className="bg-slate-50">
             <TableRow>
               <TableHead>Nama Karyawan</TableHead>
-              <TableHead>Email</TableHead>
+              <TableHead>Email (Login)</TableHead>
               <TableHead>Status Akun</TableHead>
               <TableHead className="text-right">Aksi</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading ? <TableRow><TableCell colSpan={4} className="text-center">Loading...</TableCell></TableRow> :
-            crews.map((crew) => (
+            {loading && <TableRow><TableCell colSpan={4} className="text-center h-24">Memuat data...</TableCell></TableRow>}
+            
+            {!loading && crews.map((crew) => (
               <TableRow key={crew.id}>
-                <TableCell className="font-medium">{crew.full_name}</TableCell>
+                <TableCell className="font-medium">
+                    {crew.full_name}
+                    <div className="text-xs text-muted-foreground capitalize">{crew.role}</div>
+                </TableCell>
                 
                 {/* --- KOLOM EMAIL EDITABLE --- */}
                 <TableCell>
@@ -151,6 +167,7 @@ export default function CrewAccountsPage() {
                                 onChange={(e) => setTempEmail(e.target.value)} 
                                 className="h-8 w-[200px]"
                                 placeholder="nama@email.com"
+                                autoFocus
                             />
                             <Button size="icon" variant="ghost" className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50" onClick={() => saveEmail(crew.id)}>
                                 <Save className="h-4 w-4" />
@@ -162,7 +179,7 @@ export default function CrewAccountsPage() {
                     ) : (
                         <div className="flex items-center gap-2 group">
                             {crew.email ? (
-                                <span>{crew.email}</span>
+                                <span className="font-mono text-sm">{crew.email}</span>
                             ) : (
                                 <span className="text-red-500 text-xs italic">Belum ada email</span>
                             )}
@@ -184,9 +201,11 @@ export default function CrewAccountsPage() {
 
                 <TableCell>
                   {crew.auth_user_id ? (
-                    <Badge className="bg-green-600"><CheckCircle2 className="w-3 h-3 mr-1"/> Aktif</Badge>
+                    <Badge className="bg-green-100 text-green-800 hover:bg-green-200 border-green-200">
+                        <CheckCircle2 className="w-3 h-3 mr-1"/> Terdaftar
+                    </Badge>
                   ) : (
-                    <Badge variant="outline">Belum Terdaftar</Badge>
+                    <Badge variant="outline" className="text-slate-500">Belum Terdaftar</Badge>
                   )}
                 </TableCell>
                 
