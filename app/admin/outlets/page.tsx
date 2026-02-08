@@ -12,11 +12,19 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 
-type Outlet = { id: string; name: string; outlet_code: string; };
+// 1. Tambahkan property 'address' pada Type
+type Outlet = { 
+    id: string; 
+    name: string; 
+    outlet_code: string; 
+    address: string; 
+};
 
+// 2. Tambahkan validasi 'address' pada Form Schema
 const formSchema = z.object({
     name: z.string().min(3, { message: "Nama outlet minimal 3 karakter" }),
     outlet_code: z.string().min(2, { message: "Kode outlet minimal 2 karakter" }).max(10).transform(val => val.toUpperCase()),
+    address: z.string().min(5, { message: "Alamat lengkap minimal 5 karakter" }),
 });
 
 export default function ManageOutletsPage() {
@@ -25,11 +33,13 @@ export default function ManageOutletsPage() {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingOutlet, setEditingOutlet] = useState<Outlet | null>(null);
 
-    const form = useForm<z.infer<typeof formSchema>>({ resolver: zodResolver(formSchema) });
+    const form = useForm<z.infer<typeof formSchema>>({ 
+        resolver: zodResolver(formSchema),
+        defaultValues: { name: '', outlet_code: '', address: '' } 
+    });
 
     const fetchData = async () => {
         setIsLoading(true);
-        // PERUBAHAN 1: Tambahkan { cache: 'no-store' } untuk memastikan data selalu baru
         const res = await fetch('/api/admin/outlets', { cache: 'no-store' });
         const data = await res.json();
         setOutlets(data);
@@ -42,7 +52,8 @@ export default function ManageOutletsPage() {
 
     const handleOpenDialog = (outlet: Outlet | null = null) => {
         setEditingOutlet(outlet);
-        form.reset(outlet || { name: '', outlet_code: '' });
+        // Reset form dengan nilai address jika sedang mengedit
+        form.reset(outlet || { name: '', outlet_code: '', address: '' });
         setIsDialogOpen(true);
     };
 
@@ -54,17 +65,11 @@ export default function ManageOutletsPage() {
             const response = await fetch('/api/admin/outlets', { method, headers: { 'Content-Type': 'application/json' }, body });
             if (!response.ok) throw new Error("Gagal menyimpan data outlet.");
 
-            toast.success("Sukses!", {
-                description: "Data outlet berhasil disimpan.",
-            });
-            
+            toast.success("Sukses!", { description: "Data outlet berhasil disimpan." });
             setIsDialogOpen(false);
             fetchData();
         } catch (error: any) {
-            // 3. UBAH CARA PEMANGGILAN TOAST ERROR
-            toast.error("Error!", {
-                description: error.message,
-            });
+            toast.error("Error!", { description: error.message });
         }
     };
 
@@ -75,23 +80,15 @@ export default function ManageOutletsPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id }),
             });
-
             if (!response.ok) throw new Error("Gagal menghapus data outlet.");
-            
-            // 3. UBAH CARA PEMANGGILAN TOAST
-            toast.success("Sukses!", {
-                description: "Data outlet berhasil dihapus.",
-            });
+            toast.success("Sukses!", { description: "Data outlet berhasil dihapus." });
             fetchData();
         } catch (error: any) {
-             // 3. UBAH CARA PEMANGGILAN TOAST ERROR
-            toast.error("Error!", {
-                description: error.message,
-            });
+            toast.error("Error!", { description: error.message });
         }
     };
 
-    if(isLoading) return <p>Loading data outlet...</p>;
+    if(isLoading) return <p className="p-4 text-center">Loading data outlet...</p>;
 
     return (
         <div className="space-y-4">
@@ -101,7 +98,7 @@ export default function ManageOutletsPage() {
             </div>
 
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogContent>
+                <DialogContent className="max-w-md">
                     <DialogHeader><DialogTitle>{editingOutlet ? 'Edit Outlet' : 'Tambah Outlet Baru'}</DialogTitle></DialogHeader>
                     <Form {...form}>
                         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -119,6 +116,14 @@ export default function ManageOutletsPage() {
                                     <FormMessage />
                                 </FormItem>
                             )}/>
+                            {/* 3. TAMBAHAN INPUT ALAMAT DI FORM */}
+                            <FormField control={form.control} name="address" render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>Alamat Outlet</FormLabel>
+                                    <FormControl><Input placeholder="Jl. Abdul Rahman Saleh No.69..." {...field} /></FormControl>
+                                    <FormMessage />
+                                </FormItem>
+                            )}/>
                             <DialogFooter>
                                 <DialogClose asChild><Button type="button" variant="secondary">Batal</Button></DialogClose>
                                 <Button type="submit">Simpan</Button>
@@ -128,39 +133,45 @@ export default function ManageOutletsPage() {
                 </DialogContent>
             </Dialog>
 
-            <Table>
-                <TableHeader>
-                    <TableRow>
-                        <TableHead>Nama Outlet</TableHead>
-                        <TableHead>Kode</TableHead>
-                        <TableHead>Aksi</TableHead>
-                    </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {outlets.map(outlet => (
-                        <TableRow key={outlet.id}>
-                            <TableCell className="font-medium">{outlet.name}</TableCell>
-                            <TableCell>{outlet.outlet_code}</TableCell>
-                            <TableCell className="space-x-2">
-                                <Button variant="outline" size="sm" onClick={() => handleOpenDialog(outlet)}>Edit</Button>
-                                <AlertDialog>
-                                    <AlertDialogTrigger asChild><Button variant="destructive" size="sm">Hapus</Button></AlertDialogTrigger>
-                                    <AlertDialogContent>
-                                        <AlertDialogHeader>
-                                            <AlertDialogTitle>Anda Yakin?</AlertDialogTitle>
-                                            <AlertDialogDescription>Aksi ini akan menghapus outlet dan semua data kru yang terhubung dengannya secara permanen.</AlertDialogDescription>
-                                        </AlertDialogHeader>
-                                        <AlertDialogFooter>
-                                            <AlertDialogCancel>Batal</AlertDialogCancel>
-                                            <AlertDialogAction onClick={() => handleDelete(outlet.id)} className="bg-red-600 hover:bg-red-700">Ya, Hapus</AlertDialogAction>
-                                        </AlertDialogFooter>
-                                    </AlertDialogContent>
-                                </AlertDialog>
-                            </TableCell>
+            <div className="rounded-md border">
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Nama Outlet</TableHead>
+                            <TableHead>Kode</TableHead>
+                            {/* 4. TAMBAHAN HEADER TABEL ALAMAT */}
+                            <TableHead>Alamat</TableHead>
+                            <TableHead className="text-right">Aksi</TableHead>
                         </TableRow>
-                    ))}
-                </TableBody>
-            </Table>
+                    </TableHeader>
+                    <TableBody>
+                        {outlets.map(outlet => (
+                            <TableRow key={outlet.id}>
+                                <TableCell className="font-medium">{outlet.name}</TableCell>
+                                <TableCell>{outlet.outlet_code}</TableCell>
+                                {/* 5. TAMBAHAN CELL TABEL ALAMAT */}
+                                <TableCell className="max-w-xs truncate">{outlet.address}</TableCell>
+                                <TableCell className="text-right space-x-2">
+                                    <Button variant="outline" size="sm" onClick={() => handleOpenDialog(outlet)}>Edit</Button>
+                                    <AlertDialog>
+                                        <AlertDialogTrigger asChild><Button variant="destructive" size="sm">Hapus</Button></AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                                <AlertDialogTitle>Anda Yakin?</AlertDialogTitle>
+                                                <AlertDialogDescription>Aksi ini akan menghapus outlet dan semua data kru secara permanen.</AlertDialogDescription>
+                                            </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                                <AlertDialogCancel>Batal</AlertDialogCancel>
+                                                <AlertDialogAction onClick={() => handleDelete(outlet.id)} className="bg-red-600 hover:bg-red-700">Ya, Hapus</AlertDialogAction>
+                                            </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                    </AlertDialog>
+                                </TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+            </div>
         </div>
     );
 }
