@@ -8,7 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Loader2, CheckCircle, XCircle, Banknote, AlertCircle } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Loader2, CheckCircle, XCircle, AlertTriangle, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 export default function AdminCashAdvances() {
@@ -18,15 +19,31 @@ export default function AdminCashAdvances() {
   // Modal State
   const [selectedReq, setSelectedReq] = useState<any>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [approveForm, setApproveForm] = useState({
+  
+  // Admin Processing Form
+  const [processForm, setProcessForm] = useState({
     approved_amount: 0,
-    deduction_plan_amount: 0,
-    status: 'approved'
+    approved_deduction_amount: 0,
+    previous_loan_balance_system: 0, // Admin input/check dari payroll
+    status: 'approved' // pending, approved, adjusted, declined
   });
+
+  // State Kalkulasi Otomatis
+  const [calculatedRemaining, setCalculatedRemaining] = useState(0);
 
   useEffect(() => {
     fetchRequests();
   }, []);
+
+  // Kalkulasi Real-time saat input berubah
+  useEffect(() => {
+      // Rumus: Sisa Awal (System) + Kasbon Baru (Approved) - Potongan (Approved)
+      const sisaAwal = Number(processForm.previous_loan_balance_system) || 0;
+      const kasbonBaru = Number(processForm.approved_amount) || 0;
+      const potongan = Number(processForm.approved_deduction_amount) || 0;
+      
+      setCalculatedRemaining(sisaAwal + kasbonBaru - potongan);
+  }, [processForm]);
 
   const fetchRequests = async () => {
     setLoading(true);
@@ -34,51 +51,47 @@ export default function AdminCashAdvances() {
       .from("cash_advances")
       .select(`
         *,
-        crew:crew_id (full_name, outlets(name))
+        crew:crew_id (full_name, email, outlets(name))
       `)
       .order("created_at", { ascending: false });
     if (data) setRequests(data);
     setLoading(false);
   };
 
-  const openApproval = (req: any) => {
+  const openApproval = async (req: any) => {
     setSelectedReq(req);
-    setApproveForm({
-      approved_amount: req.amount, 
-      deduction_plan_amount: req.deduction_plan_amount || req.amount, 
+    
+    // TODO: Di sini idealnya fetch 'previous_loan_balance_system' dari tabel Payroll terakhir crew ini
+    // Untuk sekarang kita set 0 atau ambil dari user input sebagai placeholder jika belum ada sistem payroll
+    const simulatedSystemBalance = 0; // Nanti ganti dengan fetch real dari DB Payroll
+
+    setProcessForm({
+      approved_amount: req.request_amount, 
+      approved_deduction_amount: req.request_deduction_amount,
+      previous_loan_balance_system: simulatedSystemBalance,
       status: 'approved'
     });
     setIsDialogOpen(true);
   };
 
-  const handleProcess = async () => {
+  const handleSave = async () => {
     if (!selectedReq) return;
     try {
-      const payload: any = {
-          status: approveForm.status,
-      };
-
-      // Jika Disetujui, set Approved Amount & Reset Remaining Amount
-      if (approveForm.status === 'approved') {
-          payload.approved_amount = approveForm.approved_amount;
-          payload.deduction_plan_amount = approveForm.deduction_plan_amount;
-          // Hanya set remaining_amount jika ini persetujuan awal (bukan edit)
-          if (selectedReq.status === 'pending') {
-             payload.remaining_amount = approveForm.approved_amount; 
-          }
-      } else {
-          payload.remaining_amount = 0;
-          payload.approved_amount = 0;
-      }
-
       const { error } = await supabase
         .from("cash_advances")
-        .update(payload)
+        .update({
+            status: processForm.status,
+            approved_amount: processForm.approved_amount,
+            approved_deduction_amount: processForm.approved_deduction_amount,
+            previous_loan_balance_system: processForm.previous_loan_balance_system,
+            remaining_balance_end: calculatedRemaining,
+            updated_at: new Date()
+        })
         .eq("id", selectedReq.id);
 
       if (error) throw error;
       
-      toast.success(`Pengajuan berhasil diproses: ${approveForm.status}`);
+      toast.success(`Status diperbarui: ${processForm.status.toUpperCase()}`);
       setIsDialogOpen(false);
       fetchRequests();
     } catch (e: any) {
@@ -93,7 +106,7 @@ export default function AdminCashAdvances() {
       <div className="flex items-center justify-between">
         <div>
             <h1 className="text-2xl font-bold">Manajemen Kasbon</h1>
-            <p className="text-muted-foreground">Monitor dan setujui pengajuan pinjaman karyawan.</p>
+            <p className="text-muted-foreground">Monitor pengajuan pinjaman karyawan.</p>
         </div>
       </div>
 
@@ -102,19 +115,17 @@ export default function AdminCashAdvances() {
           <TableHeader className="bg-slate-50">
             <TableRow>
               <TableHead>Tgl</TableHead>
-              <TableHead>Nama Karyawan</TableHead>
-              <TableHead>Alasan</TableHead>
+              <TableHead>Nama</TableHead>
               <TableHead>Diajukan</TableHead>
-              <TableHead>Disetujui</TableHead>
-              <TableHead>Cicilan/Bln</TableHead>
-              <TableHead>Sisa Hutang</TableHead>
+              <TableHead>Potongan</TableHead>
+              <TableHead>Sisa Hutang (Akhir)</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Aksi</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading ? <TableRow><TableCell colSpan={9} className="text-center h-24"><Loader2 className="animate-spin h-6 w-6 mx-auto"/></TableCell></TableRow> :
-            requests.length === 0 ? <TableRow><TableCell colSpan={9} className="text-center h-24 text-muted-foreground">Tidak ada data.</TableCell></TableRow> :
+            {loading ? <TableRow><TableCell colSpan={7} className="text-center h-24"><Loader2 className="animate-spin h-6 w-6 mx-auto"/></TableCell></TableRow> :
+            requests.length === 0 ? <TableRow><TableCell colSpan={7} className="text-center h-24 text-muted-foreground">Tidak ada data.</TableCell></TableRow> :
             requests.map((r) => (
               <TableRow key={r.id}>
                 <TableCell className="text-xs">{new Date(r.request_date).toLocaleDateString('id-ID')}</TableCell>
@@ -122,33 +133,21 @@ export default function AdminCashAdvances() {
                     <div className="font-bold">{r.crew?.full_name}</div>
                     <div className="text-[10px] text-muted-foreground">{r.crew?.outlets?.name}</div>
                 </TableCell>
-                <TableCell className="max-w-[150px] truncate text-xs" title={r.reason}>{r.reason}</TableCell>
-                <TableCell>{formatRp(r.amount)}</TableCell>
-                <TableCell className="font-bold text-blue-600">{r.approved_amount > 0 ? formatRp(r.approved_amount) : '-'}</TableCell>
-                <TableCell className="text-xs text-slate-500">{r.deduction_plan_amount > 0 ? formatRp(r.deduction_plan_amount) : '-'}</TableCell>
-                <TableCell>
-                    {r.status === 'approved' && r.remaining_amount > 0 ? (
-                        <span className="text-red-600 font-bold">{formatRp(r.remaining_amount)}</span>
-                    ) : r.status === 'paid_off' || r.remaining_amount === 0 && r.status === 'approved' ? (
-                        <span className="text-green-600 font-bold flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Lunas</span>
-                    ) : '-'}
+                <TableCell>{formatRp(r.request_amount)}</TableCell>
+                <TableCell>{formatRp(r.request_deduction_amount)}</TableCell>
+                <TableCell className="font-bold text-red-600">
+                    {r.status === 'pending' ? '-' : formatRp(r.remaining_balance_end)}
                 </TableCell>
                 <TableCell>
-                    {r.status === 'pending' && <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">Menunggu</Badge>}
-                    {r.status === 'approved' && r.remaining_amount > 0 && <Badge className="bg-blue-600">Aktif</Badge>}
-                    {r.status === 'rejected' && <Badge variant="destructive">Ditolak</Badge>}
-                    {(r.status === 'paid_off' || (r.status === 'approved' && r.remaining_amount <= 0)) && <Badge variant="secondary" className="bg-green-100 text-green-700 border-green-200">Lunas</Badge>}
+                    {r.status === 'pending' && <Badge variant="outline" className="bg-yellow-50 text-yellow-700">Pending</Badge>}
+                    {r.status === 'approved' && <Badge className="bg-green-600">Approved</Badge>}
+                    {r.status === 'adjusted' && <Badge className="bg-blue-600">Adjusted</Badge>}
+                    {r.status === 'declined' && <Badge variant="destructive">Declined</Badge>}
                 </TableCell>
                 <TableCell className="text-right">
-                    {r.status === 'pending' ? (
-                        <Button size="sm" onClick={() => openApproval(r)}>
-                            Proses
-                        </Button>
-                    ) : (
-                        <Button size="sm" variant="ghost" disabled>
-                            Selesai
-                        </Button>
-                    )}
+                    <Button size="sm" variant="outline" onClick={() => openApproval(r)}>
+                        Detail / Proses
+                    </Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -156,62 +155,100 @@ export default function AdminCashAdvances() {
         </Table>
       </div>
 
-      {/* MODAL APPROVAL */}
+      {/* MODAL APPROVAL ADMIN */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
-            <DialogHeader><DialogTitle>Proses Pengajuan Kasbon</DialogTitle></DialogHeader>
-            <div className="grid gap-4 py-4">
-                <div className="p-3 bg-blue-50 border border-blue-100 rounded text-sm space-y-1">
-                    <p className="flex justify-between"><span>Nama:</span> <strong>{selectedReq?.crew?.full_name}</strong></p>
-                    <p className="flex justify-between"><span>Pengajuan:</span> <strong>Rp {selectedReq && formatRp(selectedReq.amount)}</strong></p>
-                    <div className="border-t border-blue-200 my-2 pt-1">
-                        <span className="text-xs text-slate-500">Alasan:</span>
-                        <p className="italic text-slate-700">{selectedReq?.reason}</p>
-                    </div>
-                </div>
+        <DialogContent className="max-w-lg">
+            <DialogHeader><DialogTitle>Proses Pengajuan: {selectedReq?.crew?.full_name}</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-2">
                 
+                {/* Info Request User */}
+                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded text-sm">
+                    <div>
+                        <p className="text-xs text-slate-500">Jumlah Diajukan:</p>
+                        <p className="font-semibold">{selectedReq && formatRp(selectedReq.request_amount)}</p>
+                    </div>
+                    <div>
+                        <p className="text-xs text-slate-500">Potongan Diajukan:</p>
+                        <p className="font-semibold">{selectedReq && formatRp(selectedReq.request_deduction_amount)}</p>
+                    </div>
+                    <div>
+                        <p className="text-xs text-slate-500">Sisa Hutang (Versi User):</p>
+                        <p className="font-semibold">{selectedReq && formatRp(selectedReq.previous_loan_balance_user)}</p>
+                    </div>
+                    <div>
+                        <p className="text-xs text-slate-500">Alasan:</p>
+                        <p className="italic text-slate-700 truncate">{selectedReq?.reason}</p>
+                    </div>
+                    {selectedReq?.document_url && (
+                        <div className="col-span-2">
+                            <a href={selectedReq.document_url} target="_blank" className="text-blue-600 text-xs flex items-center gap-1 hover:underline">
+                                <FileText className="w-3 h-3"/> Lihat Dokumen Lampiran
+                            </a>
+                        </div>
+                    )}
+                </div>
+
+                <div className="border-t my-2"></div>
+
+                {/* Form Keputusan Admin */}
                 <div className="grid grid-cols-2 gap-4">
-                     <div className="space-y-2">
-                        <Label>Disetujui (Rp)</Label>
+                    <div className="space-y-2">
+                        <Label>Sisa Pinjaman Sebelumnya (System Check)</Label>
                         <Input 
                             type="number" 
-                            className="font-bold text-blue-700"
-                            value={approveForm.approved_amount} 
-                            onChange={(e) => setApproveForm({...approveForm, approved_amount: Number(e.target.value)})}
+                            className="bg-yellow-50 border-yellow-200"
+                            value={processForm.previous_loan_balance_system}
+                            onChange={(e) => setProcessForm({...processForm, previous_loan_balance_system: Number(e.target.value)})}
+                        />
+                        {selectedReq && processForm.previous_loan_balance_system != selectedReq.previous_loan_balance_user && (
+                            <p className="text-[10px] text-red-500 flex items-center"><AlertTriangle className="w-3 h-3 mr-1"/> Beda dengan input user</p>
+                        )}
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Status Keputusan</Label>
+                        <Select value={processForm.status} onValueChange={(val) => setProcessForm({...processForm, status: val})}>
+                            <SelectTrigger><SelectValue/></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="approved">Approved (Disetujui Penuh)</SelectItem>
+                                <SelectItem value="adjusted">Adjusted (Disesuaikan)</SelectItem>
+                                <SelectItem value="declined">Declined (Ditolak)</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                        <Label>Kasbon Disetujui (Rp)</Label>
+                        <Input 
+                            type="number" 
+                            value={processForm.approved_amount}
+                            onChange={(e) => setProcessForm({...processForm, approved_amount: Number(e.target.value)})}
+                            disabled={processForm.status === 'declined'}
                         />
                     </div>
                     <div className="space-y-2">
-                        <Label>Potongan / Bulan (Rp)</Label>
+                        <Label>Potongan Disetujui (Rp)</Label>
                         <Input 
                             type="number" 
-                            value={approveForm.deduction_plan_amount} 
-                            onChange={(e) => setApproveForm({...approveForm, deduction_plan_amount: Number(e.target.value)})}
+                            value={processForm.approved_deduction_amount}
+                            onChange={(e) => setProcessForm({...processForm, approved_deduction_amount: Number(e.target.value)})}
+                            disabled={processForm.status === 'declined'}
                         />
                     </div>
                 </div>
-                
-                <div className="space-y-2">
-                    <Label>Keputusan</Label>
-                    <div className="flex gap-2">
-                        <Button 
-                            className={`flex-1 ${approveForm.status === 'approved' ? 'bg-green-600 hover:bg-green-700' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'}`}
-                            onClick={() => setApproveForm({...approveForm, status: 'approved'})}
-                        >
-                            <CheckCircle className="mr-2 h-4 w-4"/> Setujui
-                        </Button>
-                        <Button 
-                             className={`flex-1 ${approveForm.status === 'rejected' ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'}`}
-                             onClick={() => setApproveForm({...approveForm, status: 'rejected'})}
-                        >
-                            <XCircle className="mr-2 h-4 w-4"/> Tolak
-                        </Button>
-                    </div>
+
+                {/* Kalkulasi Akhir */}
+                <div className="bg-blue-50 p-3 rounded text-center border border-blue-200 mt-2">
+                    <p className="text-xs text-blue-600 mb-1">Total Sisa Pinjaman (Akhir Bulan Ini)</p>
+                    <p className="text-xl font-bold text-blue-900">{formatRp(calculatedRemaining)}</p>
+                    <p className="text-[10px] text-slate-400 mt-1">(Sisa Awal System + Kasbon Baru) - Potongan</p>
                 </div>
+
             </div>
-            <div className="flex justify-end pt-2 border-t">
-                <Button onClick={handleProcess} disabled={approveForm.approved_amount <= 0 && approveForm.status === 'approved'}>
-                    Simpan Keputusan
-                </Button>
+            <div className="flex justify-end pt-2 border-t gap-2">
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Batal</Button>
+                <Button onClick={handleSave}>Simpan Keputusan</Button>
             </div>
         </DialogContent>
       </Dialog>

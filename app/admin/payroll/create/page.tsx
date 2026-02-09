@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Save, Calculator, Link as LinkIcon, RefreshCw } from "lucide-react";
+import { Loader2, Save, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 // --- KONFIGURASI MATRIKS GAJI ---
@@ -27,24 +27,22 @@ export default function CreatePayrollPage() {
     const [loading, setLoading] = useState(false);
     const [crewList, setCrewList] = useState<any[]>([]);
     
-    // State Filter Periode Gaji
     const today = new Date();
     const [selectedMonth, setSelectedMonth] = useState<string>(String(today.getMonth() + 1));
     const [selectedYear, setSelectedYear] = useState<string>(String(today.getFullYear()));
 
-    // State Input Payroll
     const [payrollEntries, setPayrollEntries] = useState<Record<string, any>>({});
 
-    // 1. FETCH DATA CREW (Saat halaman dimuat)
+    // 1. INIT DATA
     const initData = async () => {
         setLoading(true);
         try {
-            // Ambil Crew Aktif
+            // FIX: Ambil dari 'crew_contracts' sesuai kode referensi kamu
             const { data: crews, error: errCrew } = await supabase
                 .from('crew')
                 .select(`
-                    id, full_name, join_date, bank_account_number, bank_name,
-                    outlets ( name ),
+                    id, full_name, join_date,
+                    outlets ( id, name ),
                     crew_contracts ( 
                         contract_type, experience_level, outlet_type, base_salary 
                     )
@@ -54,10 +52,27 @@ export default function CreatePayrollPage() {
 
             if (errCrew) throw errCrew;
 
-            // Setup Default Payroll Entries
+            const { data: activeLoans, error: errLoan } = await supabase
+                .from('cash_advances')
+                .select('crew_id, approved_deduction_amount, remaining_balance_end') 
+                .eq('status', 'approved')
+                .gt('remaining_balance_end', 0);
+
+            if (errLoan) throw errLoan;
+
+            const loanMap: Record<string, any> = {};
+            activeLoans?.forEach((loan: any) => {
+                loanMap[loan.crew_id] = {
+                    cicilan: loan.approved_deduction_amount, 
+                    sisa: loan.remaining_balance_end
+                };
+            });
+
             const initialEntries: any = {};
             crews?.forEach((crew: any) => {
+                // FIX: Ambil data kontrak dari array ke-0
                 const contract = crew.crew_contracts?.[0] || {};
+                
                 const calculation = calculateBaseSalary(
                     crew.join_date, 
                     contract.experience_level, 
@@ -65,14 +80,29 @@ export default function CreatePayrollPage() {
                     contract.base_salary
                 );
 
+                const loanInfo = loanMap[crew.id];
+                const deductionKasbon = loanInfo ? loanInfo.cicilan : 0;
+                const remainingLoan = loanInfo ? loanInfo.sisa : 0;
+
                 initialEntries[crew.id] = {
-                    ...calculation,
-                    work_days: 26, // Default sebelum tarik absen
+                    ...calculation, // basic_salary, month_nth, original_rate
+                    commission: 0,
                     bonus: 0,
-                    allowance: 0,
-                    deduction: 0,
-                    overtime: 0,
-                    attendance_synced: false 
+                    allowance_other: 0,
+                    work_days: 26, 
+                    count_sick: 0,
+                    count_permission: 0,
+                    count_alpha: 0,
+                    count_late: 0, 
+                    count_saturday_off: 0,
+                    meal_allowance: 40000, 
+                    deduction_sick: 0,
+                    deduction_permission: 0,
+                    deduction_alpha: 0,
+                    deduction_kasbon: deductionKasbon,
+                    remaining_loan: remainingLoan, 
+                    outlet_id: crew.outlets?.id,
+                    notes: loanInfo ? `Potong Kasbon: ${deductionKasbon}` : ''
                 };
             });
 
@@ -80,58 +110,114 @@ export default function CreatePayrollPage() {
             setPayrollEntries(initialEntries);
 
         } catch (err: any) {
-            toast.error("Gagal memuat data crew: " + err.message);
+            toast.error("Gagal init data: " + err.message);
         } finally {
             setLoading(false);
         }
     };
 
-    useEffect(() => { initData(); }, [selectedMonth, selectedYear]); // Reload base calculation if month changes
+    useEffect(() => { initData(); }, [selectedMonth, selectedYear]);
 
-    // 2. LOGIKA BARU: SINKRON ABSENSI BY BULAN & TAHUN
+    // 2. HITUNG GAPOK
+    const calculateBaseSalary = (joinDateStr: string, expLevel: string, outletType: string, contractSalary: number) => {
+        if (!joinDateStr) return { basic_salary: 0, month_nth: 0, original_rate: 0 };
+
+        const joinDate = new Date(joinDateStr);
+        const payrollDate = new Date(Number(selectedYear), Number(selectedMonth) - 1, 25);
+
+        let monthDiff = (payrollDate.getFullYear() - joinDate.getFullYear()) * 12 + (payrollDate.getMonth() - joinDate.getMonth()) + 1;
+        if (monthDiff < 1) monthDiff = 1; 
+
+        let salary = contractSalary || 0;
+
+        // Logika Matriks
+        if (monthDiff <= 3) {
+            const expKey = expLevel || "Non-Pengalaman"; 
+            const outletKey = outletType || "Express";     
+            const matrix = SALARY_MATRIX[expKey]?.[outletKey];
+            if (matrix && matrix[monthDiff - 1]) {
+                salary = matrix[monthDiff - 1];
+            }
+        }
+
+        return { 
+            basic_salary: salary, 
+            month_nth: monthDiff,
+            original_rate: salary // PENTING: Disimpan untuk hitungan HK
+        };
+    };
+
+    // 3. SYNC ABSENSI
     const syncAttendanceData = async () => {
         setLoading(true);
         try {
-            // Query Database berdasarkan Bulan & Tahun yang dipilih di Payroll
             const { data: attendanceData, error } = await supabase
                 .from('attendance_summaries')
-                .select('crew_id, count_h, count_ht, count_a, count_i')
+                .select(`
+                    crew_id, count_h, count_ht, count_s, count_i, count_a, total_late_count, count_off_saturday
+                `)
                 .eq('month', Number(selectedMonth))
                 .eq('year', Number(selectedYear));
 
             if (error) throw error;
             
             if (!attendanceData || attendanceData.length === 0) {
-                toast.warning(`Data absensi untuk bulan ${selectedMonth}/${selectedYear} belum di-upload.`);
+                toast.warning(`Data absensi bulan ${selectedMonth}/${selectedYear} kosong.`);
                 setLoading(false);
                 return;
             }
 
-            // Update Payroll Entries
             setPayrollEntries(prev => {
                 const updated = { ...prev };
                 let syncCount = 0;
 
                 attendanceData.forEach((record: any) => {
-                    if (updated[record.crew_id]) {
-                        // Rumus Hari Kerja: Hadir (H) + Hadir Telat (HT)
-                        const totalHadir = (record.count_h || 0) + (record.count_ht || 0);
+                    const cid = record.crew_id; 
+                    if (updated[cid]) {
+                        const current = updated[cid];
                         
-                        // Anda bisa menambahkan rumus denda alpha disini jika mau
-                        // const dendaAlpha = (record.count_a || 0) * 50000; 
+                        // HK = H + HT
+                        const workDays = (record.count_h || 0) + (record.count_ht || 0);
+                        
+                        // Mapping Potongan & Makan
+                        const dedSick = (record.count_s || 0) * 50000;
+                        const dedPerm = (record.count_i || 0) * 50000;
+                        const dedAlpha = (record.count_a || 0) * 50000;
+                        
+                        const satOff = record.count_off_saturday || 0;
+                        let meal = 40000 - (satOff * 10000);
+                        if(meal < 0) meal = 0;
 
-                        updated[record.crew_id] = {
-                            ...updated[record.crew_id],
-                            work_days: totalHadir,
-                            // deduction: dendaAlpha, // Uncomment jika ingin otomatis potong
-                            notes: `Hadir: ${totalHadir} | Alpha: ${record.count_a} | Izin: ${record.count_i}`,
-                            attendance_synced: true
+                        // PENTING: AUTO HITUNG GAPOK JIKA BULAN KE-1 (PRORATA)
+                        let newBasicSalary = current.basic_salary;
+                        if (current.month_nth === 1 && current.original_rate > 0) {
+                             newBasicSalary = Math.floor((current.original_rate / 26) * workDays);
+                        }
+
+                        updated[cid] = {
+                            ...current,
+                            work_days: workDays,
+                            basic_salary: newBasicSalary, // Update Gapok
+                            
+                            count_sick: record.count_s || 0,
+                            count_permission: record.count_i || 0,
+                            count_alpha: record.count_a || 0,
+                            count_late: record.count_ht || 0, // HT Merah
+                            count_saturday_off: satOff,
+                            
+                            deduction_sick: dedSick,
+                            deduction_permission: dedPerm,
+                            deduction_alpha: dedAlpha,
+                            meal_allowance: meal,
+                            
+                            attendance_synced: true,
+                            notes: (current.notes || "") + (current.month_nth === 1 ? ` [Prorata HK]` : "")
                         };
                         syncCount++;
                     }
                 });
                 
-                toast.success(`Sukses menarik data absen untuk ${syncCount} karyawan!`);
+                toast.success(`Sukses sinkron: ${syncCount} karyawan.`);
                 return updated;
             });
 
@@ -142,48 +228,29 @@ export default function CreatePayrollPage() {
         }
     };
 
-    // 3. FUNGSI HITUNG GAJI (Matriks & Prorata)
-    const calculateBaseSalary = (joinDateStr: string, expLevel: string, outletType: string, dbBaseSalary: number) => {
-        if (!joinDateStr) return { basic_salary: 0, month_nth: 0, notes: "No Join Date" };
-
-        const joinDate = new Date(joinDateStr);
-        const payrollDate = new Date(Number(selectedYear), Number(selectedMonth) - 1, 25);
-
-        let monthDiff = (payrollDate.getFullYear() - joinDate.getFullYear()) * 12 + (payrollDate.getMonth() - joinDate.getMonth()) + 1;
-        if (monthDiff < 1) monthDiff = 1; 
-
-        let salary = dbBaseSalary || 0;
-        let note = "Gaji Normal (Kontrak)";
-
-        if (monthDiff <= 3) {
-            const expKey = expLevel || "Non-Pengalaman";
-            const outletKey = outletType || "Express";
-            const matrix = SALARY_MATRIX[expKey]?.[outletKey];
-            if (matrix && matrix[monthDiff - 1]) {
-                salary = matrix[monthDiff - 1];
-                note = `Rate Bulan ke-${monthDiff} (${expKey})`;
-            }
-        }
-
-        return {
-            basic_salary: salary,
-            month_nth: monthDiff,
-            original_rate: salary,
-            notes: note
-        };
-    };
-
-    // 4. HANDLE INPUT CHANGE
+    // 4. HANDLE INPUT (LOGIKA RELASI HK -> GAPOK)
     const handleInputChange = (crewId: string, field: string, value: number) => {
         setPayrollEntries(prev => {
             const currentEntry = prev[crewId];
             let updatedEntry = { ...currentEntry, [field]: value };
 
-            // Auto-Prorata Bulan 1
+            // === LOGIKA INI YANG MEMBUAT GAPOK BERUBAH SAAT HK DIUBAH ===
+            // Syarat: Harus Bulan ke-1 (month_nth === 1)
             if (currentEntry.month_nth === 1 && field === 'work_days') {
-                const prorataSalary = Math.floor((currentEntry.original_rate / 26) * value);
+                const rate = currentEntry.original_rate || 0; // Pastikan tidak 0
+                const prorataSalary = Math.floor((rate / 26) * value);
+                
                 updatedEntry.basic_salary = prorataSalary;
                 updatedEntry.notes = `Prorata Bulan-1 (${value} Hari)`;
+            }
+            // =============================================================
+
+            if (field === 'count_sick') updatedEntry.deduction_sick = value * 50000;
+            if (field === 'count_permission') updatedEntry.deduction_permission = value * 50000;
+            if (field === 'count_alpha') updatedEntry.deduction_alpha = value * 50000;
+            if (field === 'count_saturday_off') {
+                let meal = 40000 - (value * 10000);
+                updatedEntry.meal_allowance = meal < 0 ? 0 : meal;
             }
 
             return { ...prev, [crewId]: updatedEntry };
@@ -192,36 +259,55 @@ export default function CreatePayrollPage() {
 
     // 5. SUBMIT
     const handleSubmit = async () => {
-        if (!confirm("Simpan data gaji ini?")) return;
+        if (!confirm("Simpan Data Penggajian ini?")) return;
         setLoading(true);
 
         try {
-            const payrollInserts = crewList.map(crew => {
-                const entry = payrollEntries[crew.id];
-                const total_salary = (entry.basic_salary || 0) + (entry.bonus || 0) + (entry.allowance || 0) + (entry.overtime || 0);
-                const net_salary = total_salary - (entry.deduction || 0);
+            const payrollData = crewList.map(crew => {
+                const e = payrollEntries[crew.id];
+                const total_income = (e.basic_salary??0) + (e.commission??0) + (e.bonus??0) + (e.allowance_other??0) + (e.meal_allowance??0);
+                const total_deduction = (e.deduction_kasbon??0) + (e.deduction_sick??0) + (e.deduction_permission??0) + (e.deduction_alpha??0);
+                const net_salary = total_income - total_deduction;
+                const new_remaining_loan = (e.remaining_loan??0) - (e.deduction_kasbon??0);
 
                 return {
                     crew_id: crew.id,
+                    outlet_id: e.outlet_id,
                     period_month: Number(selectedMonth),
                     period_year: Number(selectedYear),
-                    basic_salary: entry.basic_salary,
-                    allowances: entry.allowance,
-                    deductions: entry.deduction,
-                    bonuses: entry.bonus,
-                    overtime_pay: entry.overtime,
-                    total_salary: total_salary,
+                    
+                    base_salary: e.basic_salary,
+                    commission_amount: e.commission,
+                    meal_allowance: e.meal_allowance,
+                    bonus: e.bonus,
+                    allowance_other: e.allowance_other,
+                    
+                    count_sick: e.count_sick,
+                    count_permission: e.count_permission,
+                    count_alpha: e.count_alpha,
+                    count_late: e.count_late,
+                    count_saturday_off: e.count_saturday_off,
+
+                    deduction_sick: e.deduction_sick,
+                    deduction_permission: e.deduction_permission,
+                    deduction_alpha: e.deduction_alpha,
+                    deduction_kasbon: e.deduction_kasbon,
+                    
+                    remaining_loan: new_remaining_loan,
+                    total_income: total_income,
+                    total_deduction: total_deduction,
                     net_salary: net_salary,
-                    work_days: entry.work_days,
-                    notes: entry.notes,
-                    status: 'Pending'
+                    
+                    status: 'Draft',
+                    payment_date: new Date(),
+                    notes: e.notes
                 };
             });
 
-            const { error } = await supabase.from('payroll').insert(payrollInserts);
+            const { error } = await supabase.from('payrolls').insert(payrollData);
             if (error) throw error;
 
-            toast.success("Payroll berhasil dibuat!");
+            toast.success("Payroll berhasil disimpan!");
         } catch (err: any) {
             toast.error(err.message);
         } finally {
@@ -231,131 +317,157 @@ export default function CreatePayrollPage() {
 
     return (
         <div className="space-y-6">
-            {/* HEADER CONTROLS */}
-            <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white p-4 rounded-lg border shadow-sm">
+            <div className="flex justify-between items-center bg-white p-4 rounded-lg border shadow-sm">
                 <div>
-                    <h1 className="text-2xl font-bold tracking-tight">Buat Gaji Baru</h1>
-                    <p className="text-muted-foreground text-sm">Hitung gaji bulanan & sinkronisasi absensi.</p>
+                    <h1 className="text-xl font-bold">Input Penggajian</h1>
+                    <p className="text-sm text-gray-500">Hitung gaji & potongan periode ini.</p>
                 </div>
-                
-                <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1 border rounded px-2 bg-gray-50 h-10">
-                        <span className="text-xs font-semibold text-gray-500 mr-1">PERIODE:</span>
-                        <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                            <SelectTrigger className="w-[110px] h-8 border-0 bg-transparent"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                                {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map((m, i) => (
-                                    <SelectItem key={i} value={String(i + 1)}>{m}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        <Select value={selectedYear} onValueChange={setSelectedYear}>
-                            <SelectTrigger className="w-[80px] h-8 border-0 bg-transparent"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="2025">2025</SelectItem>
-                                <SelectItem value="2026">2026</SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </div>
-
-                    {/* TOMBOL TARIK DATA (LANGSUNG DARI BULAN/TAHUN YG DIPILIH) */}
-                    <Button 
-                        variant="default"
-                        className="bg-blue-600 hover:bg-blue-700 h-10"
-                        onClick={syncAttendanceData}
-                        disabled={loading}
-                    >
-                        <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-                        Tarik Absensi {selectedMonth}/{selectedYear}
+                <div className="flex gap-2 items-center">
+                    <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                        <SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            {["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"].map((m, i) => (
+                                <SelectItem key={i} value={String(i + 1)}>{m}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <Select value={selectedYear} onValueChange={setSelectedYear}>
+                        <SelectTrigger className="w-[80px]"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="2025">2025</SelectItem><SelectItem value="2026">2026</SelectItem></SelectContent>
+                    </Select>
+                    
+                    <Button variant="outline" size="sm" onClick={syncAttendanceData} disabled={loading} className="ml-2">
+                        <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} /> Sync Absen
                     </Button>
                 </div>
             </div>
 
-            {/* TABLE PAYROLL */}
-            <Card className="shadow-lg border-t-4 border-blue-600">
-                <CardHeader className="bg-blue-50/30 py-4">
-                    <CardTitle className="text-base flex justify-between items-center text-blue-900">
-                        <span>Draft Gaji Karyawan</span>
-                        <Badge variant="outline" className="bg-white">Total: {crewList.length}</Badge>
-                    </CardTitle>
+            <Card className="border-t-4 border-blue-600 shadow-md">
+                <CardHeader className="py-3 bg-gray-50">
+                    <CardTitle className="text-sm font-medium">Form Input Gaji</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0 overflow-x-auto">
-                    <Table>
+                    {/* TABLE LEBAR (Scroll Horizontal) */}
+                    <Table className="min-w-[2400px]">
                         <TableHeader>
-                            <TableRow className="bg-gray-100/80">
-                                <TableHead className="w-[200px]">Karyawan</TableHead>
-                                <TableHead className="text-center w-[80px]">Masa</TableHead>
-                                <TableHead className="text-center w-[80px]">HK</TableHead>
-                                <TableHead className="w-[140px]">Gaji Pokok</TableHead>
-                                <TableHead className="w-[120px]">Tunjangan</TableHead>
-                                <TableHead className="w-[120px]">Bonus</TableHead>
-                                <TableHead className="w-[120px]">Potongan</TableHead>
-                                <TableHead className="w-[140px] text-right font-bold text-green-700">THP (Net)</TableHead>
+                            <TableRow className="bg-gray-100 text-[11px] uppercase tracking-wide">
+                                <TableHead className="w-[250px] sticky left-0 z-20 bg-gray-100 shadow-sm border-r">Nama Karyawan</TableHead>
+                                <TableHead className="w-[80px] text-center bg-blue-50 text-blue-700 font-bold border-r">HK</TableHead>
+                                <TableHead className="w-[160px] pl-4">Gaji Pokok</TableHead>
+                                <TableHead className="w-[130px]">Persenan</TableHead>
+                                <TableHead className="w-[130px]">Bonus</TableHead>
+                                <TableHead className="w-[130px]">Tunjangan</TableHead>
+                                <TableHead className="w-[140px] bg-green-50 text-green-700 border-l border-r">Uang Makan (+)</TableHead>
+                                <TableHead className="w-[90px] bg-red-50 text-red-600 text-center">Sakit (-)</TableHead>
+                                <TableHead className="w-[90px] bg-red-50 text-red-600 text-center">Izin (-)</TableHead>
+                                <TableHead className="w-[90px] bg-red-50 text-red-600 text-center">Alpa (-)</TableHead>
+                                <TableHead className="w-[60px] text-center text-red-600 font-bold bg-red-100 border-l border-r">HT</TableHead>
+                                <TableHead className="w-[140px] text-red-600 border-r">Kasbon (-)</TableHead>
+                                <TableHead className="w-[160px] text-right font-bold text-blue-700 bg-blue-50 border-r">Total Gaji</TableHead>
+                                <TableHead className="w-[160px] text-right font-black text-green-700 bg-green-50">DITERIMA (NET)</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {loading ? (
-                                <TableRow><TableCell colSpan={8} className="text-center h-24"><Loader2 className="animate-spin mx-auto text-blue-600"/></TableCell></TableRow>
+                                <TableRow><TableCell colSpan={14} className="text-center h-24"><Loader2 className="animate-spin mx-auto"/></TableCell></TableRow>
                             ) : crewList.length === 0 ? (
-                                <TableRow><TableCell colSpan={8} className="text-center h-24 text-muted-foreground">Belum ada data crew.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={14} className="text-center h-24 text-muted-foreground">Tidak ada data crew.</TableCell></TableRow>
                             ) : (
                                 crewList.map((crew) => {
-                                    const entry = payrollEntries[crew.id] || {};
-                                    const thp = (entry.basic_salary || 0) + (entry.allowance || 0) + (entry.bonus || 0) - (entry.deduction || 0);
+                                    const e = payrollEntries[crew.id] || {};
+                                    
+                                    const totalIncome = (e.basic_salary??0) + (e.commission??0) + (e.bonus??0) + (e.allowance_other??0) + (e.meal_allowance??0);
+                                    const deductAbsen = (e.deduction_sick??0) + (e.deduction_permission??0) + (e.deduction_alpha??0);
+                                    const totalDeduct = deductAbsen + (e.deduction_kasbon??0);
+                                    const net = totalIncome - totalDeduct;
 
                                     return (
-                                        <TableRow key={crew.id} className="hover:bg-blue-50/10">
-                                            <TableCell>
-                                                <div className="font-bold text-gray-800">{crew.full_name}</div>
-                                                <div className="text-xs text-muted-foreground mb-1">{crew.outlets?.name}</div>
-                                                {entry.attendance_synced ? (
-                                                    <Badge variant="secondary" className="text-[9px] bg-green-100 text-green-800 h-4 px-1">Synced</Badge>
-                                                ) : (
-                                                    <Badge variant="outline" className="text-[9px] text-gray-400 h-4 px-1 border-dashed">Manual</Badge>
+                                        <TableRow key={crew.id} className="hover:bg-blue-50/10 text-xs">
+                                            {/* NAMA (STICKY) */}
+                                            <TableCell className="sticky left-0 z-10 bg-white border-r shadow-sm">
+                                                <div className="font-bold text-sm truncate">{crew.full_name}</div>
+                                                <div className="text-[10px] text-gray-500 flex items-center gap-1">
+                                                    {crew.outlets?.name} <span className="text-gray-300">|</span> Bln-{e.month_nth??0}
+                                                </div>
+                                                {(e.remaining_loan??0) > 0 && (
+                                                    <div className="text-[10px] text-red-600 font-bold mt-1 bg-red-50 inline-block px-1 rounded">
+                                                        Sisa Hutang: {(e.remaining_loan??0).toLocaleString()}
+                                                    </div>
                                                 )}
-                                                <div className="text-[10px] text-blue-600 mt-1 italic truncate max-w-[180px]">{entry.notes}</div>
+                                                {/* Indikator Prorata */}
+                                                {e.month_nth === 1 && (
+                                                    <Badge className="ml-1 text-[8px] h-3 px-1 bg-yellow-100 text-yellow-800">Prorata</Badge>
+                                                )}
                                             </TableCell>
                                             
-                                            <TableCell className="text-center">
-                                                <Badge className="bg-gray-200 text-gray-700">Bl-{entry.month_nth}</Badge>
-                                            </TableCell>
-                                            
-                                            <TableCell className="text-center">
+                                            {/* HK (TRIGGER PRORATA) */}
+                                            <TableCell className="bg-blue-50/20 text-center border-r">
                                                 <Input 
-                                                    type="number" 
-                                                    className={`h-8 w-14 text-center ${entry.attendance_synced ? 'bg-green-50 border-green-200' : ''}`}
-                                                    value={entry.work_days}
-                                                    onChange={(e) => handleInputChange(crew.id, 'work_days', Number(e.target.value))}
+                                                    type="number" className="h-8 w-full text-center font-bold text-blue-700 bg-white" 
+                                                    value={e.work_days ?? 0} 
+                                                    onChange={(ev) => handleInputChange(crew.id, 'work_days', Number(ev.target.value))}
                                                 />
                                             </TableCell>
-                                            
-                                            <TableCell>
-                                                <div className="font-medium text-gray-700">Rp {entry.basic_salary?.toLocaleString('id-ID')}</div>
-                                            </TableCell>
-                                            
-                                            <TableCell>
-                                                <Input 
-                                                    type="number" className="h-8 text-right text-xs" placeholder="0"
-                                                    onChange={(e) => handleInputChange(crew.id, 'allowance', Number(e.target.value))}
+
+                                            {/* GAPOK */}
+                                            <TableCell className="pl-4">
+                                                <Input type="number" className="h-8 bg-gray-50 font-medium" 
+                                                    value={e.basic_salary ?? 0} 
+                                                    onChange={(ev) => handleInputChange(crew.id, 'basic_salary', Number(ev.target.value))}
                                                 />
                                             </TableCell>
-                                            <TableCell>
-                                                <Input 
-                                                    type="number" className="h-8 text-right text-xs" placeholder="0"
-                                                    onChange={(e) => handleInputChange(crew.id, 'bonus', Number(e.target.value))}
-                                                />
+
+                                            {/* INPUTS LAIN */}
+                                            <TableCell><Input type="number" className="h-8" placeholder="0" value={e.commission ?? 0} onChange={(ev) => handleInputChange(crew.id, 'commission', Number(ev.target.value))}/></TableCell>
+                                            <TableCell><Input type="number" className="h-8" placeholder="0" value={e.bonus ?? 0} onChange={(ev) => handleInputChange(crew.id, 'bonus', Number(ev.target.value))}/></TableCell>
+                                            <TableCell><Input type="number" className="h-8" placeholder="0" value={e.allowance_other ?? 0} onChange={(ev) => handleInputChange(crew.id, 'allowance_other', Number(ev.target.value))}/></TableCell>
+
+                                            {/* UANG MAKAN */}
+                                            <TableCell className="bg-green-50/30 border-l border-r">
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <span className="text-[9px] text-gray-500">Off Sbt</span>
+                                                    <span className="text-[10px] font-bold text-gray-700">{e.count_saturday_off ?? 0}</span>
+                                                </div>
+                                                <div className="font-bold text-green-700 text-sm">{(e.meal_allowance??0).toLocaleString()}</div>
                                             </TableCell>
-                                            <TableCell>
+
+                                            {/* POTONGAN */}
+                                            <TableCell className="bg-red-50/30 px-1">
+                                                <Input type="number" className="h-6 w-full text-center text-[10px] mb-1" placeholder="0" value={e.count_sick ?? 0} onChange={(ev) => handleInputChange(crew.id, 'count_sick', Number(ev.target.value))}/>
+                                                <div className="text-[9px] text-red-600 text-center font-semibold">{(e.deduction_sick??0).toLocaleString()}</div>
+                                            </TableCell>
+                                            <TableCell className="bg-red-50/30 px-1">
+                                                <Input type="number" className="h-6 w-full text-center text-[10px] mb-1" placeholder="0" value={e.count_permission ?? 0} onChange={(ev) => handleInputChange(crew.id, 'count_permission', Number(ev.target.value))}/>
+                                                <div className="text-[9px] text-red-600 text-center font-semibold">{(e.deduction_permission??0).toLocaleString()}</div>
+                                            </TableCell>
+                                            <TableCell className="bg-red-50/30 px-1">
+                                                <Input type="number" className="h-6 w-full text-center text-[10px] mb-1" placeholder="0" value={e.count_alpha ?? 0} onChange={(ev) => handleInputChange(crew.id, 'count_alpha', Number(ev.target.value))}/>
+                                                <div className="text-[9px] text-red-600 text-center font-semibold">{(e.deduction_alpha??0).toLocaleString()}</div>
+                                            </TableCell>
+
+                                            {/* HT (MERAH) */}
+                                            <TableCell className="text-center bg-red-100/50 border-l border-r">
+                                                <div className={`font-black text-lg ${(e.count_late??0) > 0 ? 'text-red-600' : 'text-gray-300'}`}>
+                                                    {e.count_late ?? 0}
+                                                </div>
+                                            </TableCell>
+
+                                            {/* KASBON */}
+                                            <TableCell className="border-r">
                                                 <Input 
-                                                    type="number" className="h-8 text-right text-xs text-red-600 border-red-100 bg-red-50/20" 
-                                                    value={entry.deduction > 0 ? entry.deduction : ''}
+                                                    type="number" className="h-8 text-red-700 font-bold bg-red-50 border-red-200" 
+                                                    value={e.deduction_kasbon ?? 0}
                                                     placeholder="0"
-                                                    onChange={(e) => handleInputChange(crew.id, 'deduction', Number(e.target.value))}
+                                                    onChange={(ev) => handleInputChange(crew.id, 'deduction_kasbon', Number(ev.target.value))}
                                                 />
                                             </TableCell>
-                                            
-                                            <TableCell className="text-right font-bold text-green-700 bg-green-50/30">
-                                                Rp {thp.toLocaleString('id-ID')}
+
+                                            {/* TOTALS */}
+                                            <TableCell className="text-right font-bold text-blue-700 bg-blue-50/50 border-r text-sm">
+                                                {totalIncome.toLocaleString('id-ID')}
+                                            </TableCell>
+                                            <TableCell className="text-right font-black text-green-700 bg-green-100/50 text-base">
+                                                {net.toLocaleString('id-ID')}
                                             </TableCell>
                                         </TableRow>
                                     );
@@ -366,10 +478,9 @@ export default function CreatePayrollPage() {
                 </CardContent>
             </Card>
 
-            <div className="flex justify-end gap-3 mt-8 pb-10">
-                <Button variant="outline" onClick={() => window.history.back()}>Batal</Button>
-                <Button onClick={handleSubmit} disabled={loading} className="bg-blue-700 hover:bg-blue-800 px-6 shadow-lg">
-                    {loading ? <Loader2 className="animate-spin mr-2"/> : <Save className="w-4 h-4 mr-2"/>}
+            <div className="flex justify-end mt-6 pb-10">
+                <Button onClick={handleSubmit} disabled={loading} className="bg-blue-700 hover:bg-blue-800 px-8 py-6 text-lg shadow-xl">
+                    {loading ? <Loader2 className="animate-spin mr-2"/> : <Save className="mr-2 h-5 w-5"/>}
                     Simpan Payroll
                 </Button>
             </div>
