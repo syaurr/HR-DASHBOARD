@@ -180,8 +180,8 @@ export default function ContractsPage() {
                         <Select value={formData.contract_type} onValueChange={v => setFormData({...formData, contract_type: v})}>
                             <SelectTrigger><SelectValue/></SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="probation">Probation (PKWT)</SelectItem>
-                                <SelectItem value="permanent">Tetap (PKWTT)</SelectItem>
+                                <SelectItem value="probation">Probation (PKWTTP)</SelectItem>
+                                <SelectItem value="permanent">Tetap</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
