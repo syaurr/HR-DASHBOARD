@@ -13,10 +13,9 @@ import {
     LayoutDashboard, Users, Building, FileSignature, CalendarClock, Calculator, 
     ClipboardList, UserCog, Wallet, Banknote, Trophy, PanelLeftClose, PanelLeftOpen, 
     MessageSquareQuote, Settings, LogOut, BarChart, ArrowLeft, 
-    Activity, ShieldCheck, Bell
+    Activity, Bell
 } from "lucide-react";
 
-// Konfigurasi Font
 const poppins = Poppins({ 
     subsets: ["latin"], 
     weight: ["400", "500", "600", "700", "800", "900"],
@@ -42,7 +41,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         router.refresh();
     };
 
-    // === DEFINISI DATA MENU ===
+    // Data Menu
     const allMenuGroups = [
         {
             id: "penilaian",
@@ -71,9 +70,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         {
             id: "administrasi",
             title: "DATA ADMINISTRASI",
-            matchPaths: ["/admin/dashboard", "/admin/crew", "/admin/outlets", "/admin/contracts"],
+            matchPaths: ["/admin/crew", "/admin/outlets", "/admin/contracts"],
             items: [
-                { label: "Analisis Turnover", href: "/admin/dashboard", icon: Activity },
                 { label: "Approval Kandidat", href: "/admin/crew/approvals", icon: FileSignature },
                 { label: "Data Kru", href: "/admin/crew", icon: Users },
                 { label: "Outlet", href: "/admin/outlets", icon: Building },
@@ -88,22 +86,23 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
     const displayedMenus = activeGroup ? [activeGroup] : [];
 
-    // === LAYOUT 1: LANDING PAGE (/admin) - CANGKANG SAJA ===
-    // Isinya akan diambil dari page.tsx
+    // === KONDISI 1: LANDING PAGE (/admin) ===
     if (pathname === '/admin') {
         return (
             <div className={cn("min-h-screen bg-[#f4e3be] text-[#022020] selection:bg-[#033f3f] selection:text-white", poppins.variable, inter.variable)}>
-                
-                {/* HEADER GLASSMORPHISM (NAVIGASI ATAS) */}
                 <header className="fixed top-0 left-0 right-0 z-50 px-6 md:px-12 py-4">
                     <div className="max-w-7xl mx-auto flex items-center justify-between bg-white/25 backdrop-blur-md border border-white/30 rounded-2xl px-6 py-3 shadow-sm">
-                        <div className="flex items-center gap-3">
-                            <div className="size-10 flex items-center justify-center bg-[#033f3f] rounded-xl text-white shadow-lg shadow-[#033f3f]/20">
-                                <ShieldCheck className="w-6 h-6" />
-                            </div>
-                            <h2 className="text-xl md:text-2xl font-bold tracking-tight text-[#022020] font-poppins">Balista HR</h2>
+                        <div className="flex items-center gap-4">
+                            {/* --- UPDATE: Logo Tanpa Container --- */}
+                            <Image 
+                                src="/iconbal1.png" 
+                                alt="Logo Balista" 
+                                width={70} 
+                                height={70} 
+                                className="w-12 h-12 object-contain" 
+                            />
+                            <h2 className="text-l md:text-xl font-bold tracking-tight text-[#022020] font-poppins">Integrated Altri HRIS</h2>
                         </div>
-                        
                         <div className="flex items-center gap-4">
                             <div className="flex gap-2">
                                 <button className="flex items-center justify-center rounded-xl size-10 bg-white/50 text-[#022020] hover:bg-white transition-colors">
@@ -119,29 +118,28 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         </div>
                     </div>
                 </header>
-
-                {/* AREA KONTEN UTAMA (Diisi oleh page.tsx) */}
                 <main className="pt-32 pb-20 px-6 md:px-12 max-w-7xl mx-auto font-inter">
                     {children}
                 </main>
-
-                {/* FOOTER */}
                 <footer className="mt-auto border-t border-white/30 bg-white/20 backdrop-blur-md">
                     <div className="max-w-7xl mx-auto px-6 md:px-12 py-8 flex flex-col md:flex-row items-center justify-between gap-6 font-inter text-[#022020]">
-                        <div className="text-sm opacity-60 font-medium">
-                            © 2026 Balista HRIS. Platform Terpadu Manajemen SDM.
-                        </div>
-                        <div className="flex items-center gap-6">
-                            <a className="text-sm opacity-60 hover:text-[#033f3f] hover:opacity-100 font-medium transition-colors" href="#">Privasi</a>
-                            <a className="text-sm opacity-60 hover:text-[#033f3f] hover:opacity-100 font-medium transition-colors" href="#">Bantuan</a>
-                        </div>
+                        <div className="text-sm opacity-60 font-medium">© 2026 Balista HRIS. Platform Terpadu Manajemen SDM.</div>
                     </div>
                 </footer>
             </div>
         );
     }
 
-    // === LAYOUT 2: HALAMAN ADMIN (DENGAN SIDEBAR) ===
+    // === KONDISI 2: HALAMAN ANALISIS TURNOVER ===
+    if (pathname.startsWith('/admin/dashboard') && !pathname.startsWith('/admin/dashboard-penilaian')) {
+        return (
+            <div className={cn("min-h-screen bg-[#f4e3be] text-[#022020]", poppins.variable, inter.variable)}>
+                {children}
+            </div>
+        );
+    }
+
+    // === KONDISI 3: HALAMAN ADMIN LAINNYA (DENGAN SIDEBAR) ===
     return (
         <div className={cn("flex min-h-screen w-full bg-muted/40", poppins.className)}>
             {/* SIDEBAR */}
@@ -151,10 +149,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             )}>
                 <div className="flex h-16 items-center justify-center border-b px-4 bg-white">
                     <Link href="/admin">
+                        {/* Ganti logo sidebar juga jika perlu */}
                         <Image src="/logo.png" alt="Logo" width={isCollapsed ? 32 : 100} height={32} className="transition-all" />
                     </Link>
                 </div>
-
                 <div className="p-3 border-b border-dashed">
                     <Link href="/admin">
                         <Button variant="secondary" size="sm" className={cn("w-full bg-blue-50 text-blue-700 hover:bg-blue-100", isCollapsed ? "px-0" : "justify-start")}>
@@ -163,16 +161,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         </Button>
                     </Link>
                 </div>
-
                 <nav className="flex-1 overflow-y-auto py-4 space-y-4 px-2 custom-scrollbar">
                     {displayedMenus.map((group, idx) => (
                         <div key={idx}>
                             {!isCollapsed && (
                                 <h3 className="mb-2 px-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground opacity-70">
-                                    Modul {group.title}
+                                    {group.title}
                                 </h3>
                             )}
-                            
                             <div className="space-y-1">
                                 {group.items.map((link) => {
                                     const isActive = pathname === link.href;
@@ -196,7 +192,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         </div>
                     ))}
                 </nav>
-
                 <div className="border-t p-2">
                     <Button variant="ghost" className={cn("w-full justify-start text-red-600 hover:bg-red-50 hover:text-red-700", isCollapsed ? "justify-center px-0" : "")} onClick={handleLogout}>
                         <LogOut className="h-5 w-5" />{!isCollapsed && <span className="ml-2">Keluar</span>}
@@ -217,7 +212,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         </div>
                     </div>
                 </header>
-                <main className="flex-1 p-6 overflow-auto">{children}</main>
+                <main className="flex-1 p-6 overflow-auto relative">
+                    {children}
+                </main>
             </div>
         </div>
     );

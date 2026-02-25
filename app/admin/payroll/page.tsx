@@ -188,7 +188,9 @@ export default function PayrollListPage() {
                             <TableCell className="text-center font-bold text-blue-600 bg-blue-50/30">
                                 <div className="flex items-center justify-center gap-1">
                                     {row.work_days}
-                                    <Info className="w-3 h-3 text-blue-300" title="Data sinkron dengan absensi" />
+                                    <div title="Data sinkron dengan absensi">
+                                        <Info className="w-3 h-3 text-blue-300" />
+                                    </div>
                                 </div>
                             </TableCell>
                             <TableCell className="text-sm font-medium">{formatRupiah(row.base_salary)}</TableCell>
